@@ -1,0 +1,169 @@
+---
+title: Exploring the U.S. National Oceanic and Atmospheric Administration’s (NOAA) storm database
+author: "Yeasin"
+date: "4/24/2021"
+output: html_document
+---
+
+# Synopsis
+[View this document in RPubs](https://rpubs.com/yeasinopu/Reproducible-Research-Course-Project-2)
+
+Storms and other severe weather events can cause both public health and economic problems for communities and municipalities. Many severe events can result in fatalities, injuries, and property damage, and preventing such outcomes to the extent possible is a key concern.
+This project involves exploring the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database. This database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage.
+
+**The analysis of the data shows that tornadoes, by far, have the greatest health impact as measured by the number of injuries and fatalities The analysis also shows that tornadoes cause the greatest economic impact as measured by property damage and crop damage.** 
+
+# Data Processing
+### Load Necessary Library
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(reshape2)
+options(scipen = 999)
+```
+### Load the data
+The data for this assignment come in the form of a comma-separated-value file compressed via the bzip2 algorithm to reduce its size. You can download the file from the course web site: [Storm Data](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2)
+
+There is also some documentation of the database available. Here you will find how some of the variables are constructed/defined.
+
+- National Weather Service [Storm Data Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)
+- National Climatic Data Center Storm Events [FAQ](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf)  
+
+The events in the database start in the year 1950 and end in November 2011. In the earlier years of the database there are generally fewer events recorded, most likely due to a lack of good records. More recent years should be considered more complete.
+```{r Load and Download Data, echo=TRUE}
+if (!file.exists("data")) {# check directory ; if not exists then create
+    dir.create("data")
+    fileUrl <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+    download.file(fileUrl, destfile = "data/repdata_data_StormData.csv.bz2", method = "auto")
+}
+```
+
+```{r cache = TRUE}
+# read.csv can read bz2 file 
+data <- read.csv("data/repdata_data_StormData.csv.bz2")
+
+```
+
+### Exploring the data set
+```{r}
+dim(data)
+str(data)
+```
+### Subsetting the dataset
+We are only interested in the column related to health and economic impacts. Therefore, only the following columns are needed and we can remove the rest.
+
+- EVTYPE
+- FATALITIES
+- INJURIES
+- PROPDMG
+- PROPDMGEXP
+- CROPDMG
+- CROPDMGEXP
+```{r cache=TRUE}
+col <- c("EVTYPE", "FATALITIES", "INJURIES", "PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP")
+data <- select(data, all_of(col))
+data$EVTYPE <- factor(data$EVTYPE)
+str(data)
+summary(data)
+```
+### Transforming Event Type Variable
+```{r}
+NROW(unique(data$EVTYPE))
+```
+There **985** unique eventtype in our data set. So We will group events like TUNDERSTORM WIND, TUNDERSTORM WINDS, HIGH WIND, etc. by containing the keyword ‘WIND’ as one event WIND. And we will transform other types of events in a similar way. New variable EVENTS is the transform variable of EVTYPE that have 10 different types of events: HEAT, FLOOD, etc., and type OTHER for events in which name the keyword is not found
+```{r cache=TRUE}
+data$event <- "OTHRE"
+data[grep("HAIL", data$EVTYPE,ignore.case = T),]$event <- "HALT"
+data[grep("HEAT", data$EVTYPE,ignore.case = T),]$event <- "HEAT"
+data[grep("FLOOD", data$EVTYPE,ignore.case = T),]$event <- "FLOOD"
+data[grep("WIND", data$EVTYPE,ignore.case = T),]$event <- "WIND"
+data[grep("STORM", data$EVTYPE,ignore.case = T),]$event <- "STORM"
+data[grep("SNOW", data$EVTYPE,ignore.case = T),]$event <- "SNOW"
+data[grep("TORNADO", data$EVTYPE,ignore.case = T),]$event <- "TORNADO"
+data[grep("WINTER", data$EVTYPE,ignore.case = T),]$event <- "WINTER"
+data[grep("RAIN", data$EVTYPE,ignore.case = T),]$event <- "RAIN"
+table(data$event)
+```
+### Changing The **PROPDMGEXP** and **CROPDMGEXP** variable
+```{r}
+table(data$CROPDMGEXP)
+table(data$PROPDMGEXP)
+```
+There is some mess in units, so we transform those variables in one unit (dollar) variable by the following rule:
+
+- K or k: thousand dollars (10^3)  
+- M or m: million dollars (10^6)  
+- B or b: billion dollars (10^9)  
+- the rest would be consider as dollars  
+
+Here i create two new variable :
+```{r warning=FALSE}
+data$PROPDMGEXP[is.na(data$PROPDMGEXP)] <- 0
+data$PROPDMGEXP[is.na(data$CROPDMGEXP)] <- 0
+
+charTransformaton <- function(value) {
+    if (toupper(value) == "K") {
+        return(10^3) 
+    } else if (toupper(value) == "M") {
+        return(10^6)
+    } else if (toupper(value) == "B") {
+        return(10^9)
+    } else if (toupper(value) == "H") {
+        return(10^2)
+    } else if (is.na(as.numeric(value))) {
+        return(0)
+    } else if (!is.na(as.numeric(value)) 
+               &&  between(as.numeric(value),1,10) ) {
+        return(10^ trunc(as.numeric(value)))
+    } else {
+        return(0)
+    }
+}
+vCharTransformaton <- Vectorize(charTransformaton,c("value"))
+data$CROPDMG2 <- vCharTransformaton(data$CROPDMG)
+data$PROPDMGEXP2 <- vCharTransformaton(data$PROPDMGEXP)
+```
+# Analysis
+1. Estimating the total of Fatalities and Injuries (Health Impacts):
+```{r}
+Health_Impact <- group_by(data, event) %>%
+    summarise(FATALITIES = sum(FATALITIES), INJURIES = sum(INJURIES),
+              TOTAL = sum(FATALITIES) + sum(INJURIES)) %>%
+    arrange(desc(TOTAL))
+Health_Impact
+```
+2. Estimating the total of Property Cost and Crop Cost (Economic Impacts):
+
+```{r}
+Economic_Imapct <- group_by(data, event) %>%
+    summarise(propertyCost = sum(PROPDMG*PROPDMGEXP2),
+              cropCost = sum(CROPDMG*CROPDMG2)) %>%
+    mutate(total = propertyCost + cropCost) %>%
+    arrange(desc(total))
+Economic_Imapct
+```
+# Result
+1. Across the United States, which types of events (as indicated in the EVTYPE variable) are most harmful with respect to population health?
+
+```{r fig.align= 'center', fig.height= 4}
+Health_Impact$event <- factor(Health_Impact$event)
+health_data <- melt(Health_Impact, id.vars = "event",
+     variable.name = "Fatalities_and_Injuries")
+g <- ggplot(health_data, aes(event,value, fill = Fatalities_and_Injuries)) 
+g + geom_bar(stat = "identity", position = position_dodge()) +
+    theme(axis.text.x = element_text(angle=45, hjust=1)) +
+    labs(title = "Top 10 US Weather Events that are Most Harmful to Population", x= "Event Type", y = "Total Injuries/Fatalities")
+
+```
+2. Across the United States, which types of events have the greatest economic consequences ?
+
+```{r fig.align= 'center', fig.height= 4}
+Economic_Imapct$event <- factor(Health_Impact$event)
+Eco_data <- melt(Economic_Imapct, id.vars = "event",
+     variable.name = "Damage_Type")
+
+g2 <- ggplot(Eco_data, aes(event, value, fill = Damage_Type))
+g2 + geom_bar(stat = "identity", position = position_dodge()) +
+    theme(axis.text.x = element_text(angle=45, hjust=1)) +
+    labs(title = "Top 10 US Weather Events that have the Greatest Economic consequences", x = "Event Type", y = "Cost and Damage")
+```
+
